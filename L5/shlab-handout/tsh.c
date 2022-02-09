@@ -270,6 +270,11 @@ int builtin_cmd(char **argv)
         listjobs(jobs);
         return 1;
     }
+    if (!strcmp(argv[0], "bg") || !strcmp(argv[0], "fg")) {
+        do_bgfg(argv);
+        return 1;
+    }
+
     if (argv[0] == NULL)
         return 1;
 
@@ -281,6 +286,57 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+/*
+ * Jobs states: FG (foreground), BG (background), ST (stopped)
+ * Job state transitions and enabling actions:
+ *     FG -> ST  : ctrl-z
+ *     ST -> FG  : fg command
+ *     ST -> BG  : bg command
+ *     BG -> FG  : fg command
+ * At most 1 job can be in the FG state.
+ */
+//    struct job_t {              /* The job struct */
+//        pid_t pid;              /* job PID */
+//        int jid;                /* job ID [1, 2, ...] */
+//        int state;              /* UNDEF, BG, FG, or ST */
+//        char cmdline[MAXLINE];  /* command line */
+//    };
+    struct job_t* job = NULL;
+    int jid = -1;
+    pid_t pid = -1;
+
+    // 检查命令行参数是否合法
+    if(argv[1] == NULL) {
+        printf("<job> id is required\n");
+        return;
+    }
+
+    // 通过<job>值获取job对象
+    if(argv[1][0] == '%') {
+        // by JID
+        if(argv[1][1] == NULL) return;
+
+        char* job_num_str = &argv[1][1];
+        jid = atoi(job_num_str);
+        job = getjobjid(jobs, jid);
+    } else {
+        // by PID
+        char* job_num_str = &argv[1][0];
+        pid = atoi(job_num_str);
+        job = getjobpid(jobs, pid);
+    }
+
+    if(job == NULL) {
+        printf("No job with given JID of PID");
+        return;
+    }
+
+    if(!strcmp(argv[0], "bg")) {
+        
+    } else if(!strcmp(argv[0], "fg")) {
+
+    }
+
     return;
 }
 
