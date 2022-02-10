@@ -327,7 +327,7 @@ void do_bgfg(char **argv)
     }
 
     if(job == NULL) {
-        printf("No job with given JID of PID");
+        printf("No job with given JID or PID");
         return;
     }
 
