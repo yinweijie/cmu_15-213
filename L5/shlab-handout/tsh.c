@@ -86,6 +86,7 @@ typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
 
 pid_t Fork(void);
+void Kill(pid_t pid, int signum);
 
 /*
  * main - The shell's main routine 
@@ -171,13 +172,25 @@ void eval(char *cmdline)
     char buf[MAXLINE];   /* Holds modified command line */
     int bg;              /* Should the job run in bg or fg? */
     pid_t pid;           /* Process id */
+
+    sigset_t mask_all, mask_one, prev_one;
+
+    Sigfillset(&mask_all);
+    Sigemptyset(&mask_one);
+    Sigaddset(&mask_one, SIGCHLD);
+    Signal(SIGCHLD, handler);
     
     strcpy(buf, cmdline);
     bg = parseline(buf, argv); 
     if (argv[0] == NULL)  
 	return;   /* Ignore empty lines */
 
-    if (!builtin_cmd(argv)) { 
+    if (!builtin_cmd(argv)) {
+        if(access(argv[0], F_OK) == -1) { // 检查可执行文件是否存在
+            printf("%s: Command not found\n", argv[0]);
+            return;
+        }
+
         if ((pid = Fork()) == 0) {   /* Child runs user job */
             if (execve(argv[0], argv, environ) < 0) {
                 printf("%s: Command not found.\n", argv[0]);
@@ -286,21 +299,6 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
-/*
- * Jobs states: FG (foreground), BG (background), ST (stopped)
- * Job state transitions and enabling actions:
- *     FG -> ST  : ctrl-z
- *     ST -> FG  : fg command
- *     ST -> BG  : bg command
- *     BG -> FG  : fg command
- * At most 1 job can be in the FG state.
- */
-//    struct job_t {              /* The job struct */
-//        pid_t pid;              /* job PID */
-//        int jid;                /* job ID [1, 2, ...] */
-//        int state;              /* UNDEF, BG, FG, or ST */
-//        char cmdline[MAXLINE];  /* command line */
-//    };
     struct job_t* job = NULL;
     int jid = -1;
     pid_t pid = -1;
@@ -314,8 +312,6 @@ void do_bgfg(char **argv)
     // 通过<job>值获取job对象
     if(argv[1][0] == '%') {
         // by JID
-        if(argv[1][1] == NULL) return;
-
         char* job_num_str = &argv[1][1];
         jid = atoi(job_num_str);
         job = getjobjid(jobs, jid);
@@ -327,14 +323,23 @@ void do_bgfg(char **argv)
     }
 
     if(job == NULL) {
-        printf("No job with given JID or PID");
+        printf("No such job\n");
         return;
     }
 
     if(!strcmp(argv[0], "bg")) {
-        
-    } else if(!strcmp(argv[0], "fg")) {
+        if(job->state != ST) {
+            printf("job is not stopped\n");
+            return;
+        }
 
+        Kill(job->pid, SIGCONT);
+        job->state = BG;
+
+        printf("[%d] (%d) %s\n", job->jid, job->pid, job->cmdline);
+    } else if(!strcmp(argv[0], "fg")) {
+        Kill(job->pid, SIGCONT);
+        job->state = FG;
     }
 
     return;
@@ -612,3 +617,12 @@ pid_t Fork(void)
     return pid;
 }
 
+/* $begin kill */
+void Kill(pid_t pid, int signum)
+{
+    int rc;
+
+    if ((rc = kill(pid, signum)) < 0)
+        unix_error("Kill error");
+}
+/* $end kill */
