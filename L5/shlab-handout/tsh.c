@@ -51,6 +51,7 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 /* End global variables */
 
+volatile sig_atomic_t g_pid;
 
 /* Function prototypes */
 
@@ -82,11 +83,19 @@ void listjobs(struct job_t *jobs);
 void usage(void);
 void unix_error(char *msg);
 void app_error(char *msg);
-typedef void handler_t(int);
-handler_t *Signal(int signum, handler_t *handler);
 
 pid_t Fork(void);
 void Kill(pid_t pid, int signum);
+/* Signal wrappers */
+typedef void handler_t(int);
+handler_t *Signal(int signum, handler_t *handler);
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+void Sigemptyset(sigset_t *set);
+void Sigfillset(sigset_t *set);
+void Sigaddset(sigset_t *set, int signum);
+void Sigdelset(sigset_t *set, int signum);
+int Sigismember(const sigset_t *set, int signum);
+int Sigsuspend(const sigset_t *set);
 
 /*
  * main - The shell's main routine 
@@ -178,7 +187,7 @@ void eval(char *cmdline)
     Sigfillset(&mask_all);
     Sigemptyset(&mask_one);
     Sigaddset(&mask_one, SIGCHLD);
-    Signal(SIGCHLD, handler);
+    Signal(SIGCHLD, sigchld_handler);
     
     strcpy(buf, cmdline);
     bg = parseline(buf, argv); 
@@ -191,22 +200,34 @@ void eval(char *cmdline)
             return;
         }
 
+        Sigprocmask(SIG_BLOCK, &mask_one, &prev_one); /* Block SIGCHLD */
+        g_pid = 0;
         if ((pid = Fork()) == 0) {   /* Child runs user job */
+            Sigprocmask(SIG_SETMASK, &prev_one, NULL); /* Unblock SIGCHLD */
+            setpgid(0, 0);
             if (execve(argv[0], argv, environ) < 0) {
                 printf("%s: Command not found.\n", argv[0]);
                 exit(0);
             }
         }
+        Sigprocmask(SIG_BLOCK, &mask_all, NULL); /* Parent process */
+        addjob(jobs, pid, bg ? BG : FG, cmdline);  /* Add the child to the job list */
 
         /* Parent waits for foreground job to terminate */
         if (!bg) {
-            int status;
-            if (waitpid(pid, &status, 0) < 0) {
-                unix_error("waitfg: waitpid error");
-            }
+//            int status;
+//            if (waitpid(pid, &status, 0) < 0) {
+//                unix_error("waitfg: waitpid error");
+//            }
+//            waitfg(pid);
+            while (!g_pid)
+                Sigsuspend(&prev_one);
         } else {
-            printf("%d %s", pid, cmdline);
+            struct job_t* job = getjobpid(jobs, pid);
+            printf("[%d] (%d) %s", job->jid, pid, cmdline);
         }
+
+        Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
     }
 
     return;
@@ -366,6 +387,19 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int olderrno = errno;
+    sigset_t mask_all, prev_all;
+//    pid_t pid; // 这里使用g_pid
+
+    Sigfillset(&mask_all);
+    while ((g_pid = waitpid(-1, NULL, 0)) > 0) { /* Reap a zombie child */
+        Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+        deletejob(jobs, g_pid); /* Delete the child from the job list */
+        Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+    }
+    if (errno != ECHILD)
+        printf("waitpid error");
+    errno = olderrno;
     return;
 }
 
@@ -376,6 +410,8 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    pid_t fg_pid = fgpid(jobs);
+    Kill(-fg_pid, SIGINT);
     return;
 }
 
@@ -583,22 +619,6 @@ void app_error(char *msg)
 }
 
 /*
- * Signal - wrapper for the sigaction function
- */
-handler_t *Signal(int signum, handler_t *handler) 
-{
-    struct sigaction action, old_action;
-
-    action.sa_handler = handler;  
-    sigemptyset(&action.sa_mask); /* block sigs of type being handled */
-    action.sa_flags = SA_RESTART; /* restart syscalls if possible */
-
-    if (sigaction(signum, &action, &old_action) < 0)
-	unix_error("Signal error");
-    return (old_action.sa_handler);
-}
-
-/*
  * sigquit_handler - The driver program can gracefully terminate the
  *    child shell by sending it a SIGQUIT signal.
  */
@@ -626,3 +646,69 @@ void Kill(pid_t pid, int signum)
         unix_error("Kill error");
 }
 /* $end kill */
+
+/* $begin sigaction */
+handler_t *Signal(int signum, handler_t *handler)
+{
+    struct sigaction action, old_action;
+
+    action.sa_handler = handler;
+    sigemptyset(&action.sa_mask); /* Block sigs of type being handled */
+    action.sa_flags = SA_RESTART; /* Restart syscalls if possible */
+
+    if (sigaction(signum, &action, &old_action) < 0)
+        unix_error("Signal error");
+    return (old_action.sa_handler);
+}
+/* $end sigaction */
+
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
+{
+    if (sigprocmask(how, set, oldset) < 0)
+        unix_error("Sigprocmask error");
+    return;
+}
+
+void Sigemptyset(sigset_t *set)
+{
+    if (sigemptyset(set) < 0)
+        unix_error("Sigemptyset error");
+    return;
+}
+
+void Sigfillset(sigset_t *set)
+{
+    if (sigfillset(set) < 0)
+        unix_error("Sigfillset error");
+    return;
+}
+
+void Sigaddset(sigset_t *set, int signum)
+{
+    if (sigaddset(set, signum) < 0)
+        unix_error("Sigaddset error");
+    return;
+}
+
+void Sigdelset(sigset_t *set, int signum)
+{
+    if (sigdelset(set, signum) < 0)
+        unix_error("Sigdelset error");
+    return;
+}
+
+int Sigismember(const sigset_t *set, int signum)
+{
+    int rc;
+    if ((rc = sigismember(set, signum)) < 0)
+        unix_error("Sigismember error");
+    return rc;
+}
+
+int Sigsuspend(const sigset_t *set)
+{
+    int rc = sigsuspend(set); /* always returns -1 */
+    if (errno != EINTR)
+        unix_error("Sigsuspend error");
+    return rc;
+}
