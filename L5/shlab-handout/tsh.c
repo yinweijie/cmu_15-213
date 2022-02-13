@@ -392,7 +392,7 @@ void sigchld_handler(int sig)
 //    pid_t pid; // 这里使用g_pid
 
     Sigfillset(&mask_all);
-    while ((g_pid = waitpid(-1, NULL, 0)) > 0) { /* Reap a zombie child */
+    while ((g_pid = waitpid(-1, NULL, WUNTRACED | WNOHANG)) > 0) { /* Reap a zombie child */
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         deletejob(jobs, g_pid); /* Delete the child from the job list */
         Sigprocmask(SIG_SETMASK, &prev_all, NULL);
@@ -400,6 +400,7 @@ void sigchld_handler(int sig)
     if (errno != ECHILD)
         printf("waitpid error");
     errno = olderrno;
+
     return;
 }
 
@@ -410,8 +411,16 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    int olderrno = errno;
+
     pid_t fg_pid = fgpid(jobs);
-    Kill(-fg_pid, SIGINT);
+
+    if(fg_pid == 0) return;
+
+    Kill(-fg_pid, sig);
+
+    errno = olderrno;
+
     return;
 }
 
@@ -422,6 +431,16 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    int olderrno = errno;
+
+    pid_t fg_pid = fgpid(jobs);
+
+    if(fg_pid == 0) return;
+
+    Kill(-fg_pid, sig);
+
+    errno = olderrno;
+
     return;
 }
 
