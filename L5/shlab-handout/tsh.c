@@ -220,7 +220,7 @@ void eval(char *cmdline)
 //                unix_error("waitfg: waitpid error");
 //            }
 //            waitfg(pid);
-            while (!g_pid)
+            while (!g_pid) // 等待子进程结束，
                 Sigsuspend(&prev_one);
         } else {
             struct job_t* job = getjobpid(jobs, pid);
@@ -389,17 +389,42 @@ void sigchld_handler(int sig)
 {
     int olderrno = errno;
     sigset_t mask_all, prev_all;
-//    pid_t pid; // 这里使用g_pid
+    int status;
+    pid_t pid;
 
     Sigfillset(&mask_all);
-    while ((g_pid = waitpid(-1, NULL, WUNTRACED | WNOHANG)) > 0) { /* Reap a zombie child */
-        Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-        deletejob(jobs, g_pid); /* Delete the child from the job list */
-        Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+    while ((pid = waitpid(-1, &status, WUNTRACED | WNOHANG)) > 0) { /* Reap a zombie child */
+        if(WIFEXITED(status)) { // 例如：./myspin 10执行完毕后，此时子进程调用exit(0)正常退出
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+
+            deletejob(jobs, pid); /* Delete the child from the job list */
+            g_pid = pid;
+
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        } else if(WIFSIGNALED(status)) { // 例如：./myspin 10执行过程中，被Ctrl+C中断
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+
+            deletejob(jobs, pid); /* Delete the child from the job list */
+            g_pid = pid;
+            printf("terminated by signal %d\n", WTERMSIG(status));
+
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        } else { // WIFSTOPPED(status) // 被Ctrl+Z停止，后面还可以通过fg, bg命令重启
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+
+            struct job_t* job = getjobpid(jobs, pid);
+            job->state = ST;
+            printf("stopped by signal %d\n", WSTOPSIG(status));
+
+            g_pid = pid;
+//            printf("g_pid: %d\n", g_pid); // 返回被停止进程的pid
+
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        }
     }
-    if (errno != ECHILD)
-        printf("waitpid error");
+
     errno = olderrno;
+//    printf("break while pid: %d\n", pid); // 被Ctrl+Z停止的情况，pid为0，其他两种情况，pid为-1
 
     return;
 }
