@@ -2,6 +2,9 @@
  * tsh - A tiny shell program with job control
  * 
  * <Put your name and login ID here>
+ * 参考：
+ * 1. https://www.ravenxrz.ink/archives/cf3e2591.html
+ * 2. https://www.zhihu.com/people/mrwu-77-92/posts
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -361,6 +364,7 @@ void do_bgfg(char **argv)
     } else if(!strcmp(argv[0], "fg")) {
         Kill(job->pid, SIGCONT);
         job->state = FG;
+        waitfg(job->pid);
     }
 
     return;
@@ -371,6 +375,12 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while(1) {
+        if(fgpid(jobs) == 0) {
+            break;
+        }
+        sleep(1);
+    }
     return;
 }
 
