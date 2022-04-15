@@ -29,6 +29,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    // 充当server端
     listenfd = Open_listenfd(argv[1]);
     while (1) {
         clientlen = sizeof(clientaddr);
@@ -41,6 +42,8 @@ int main(int argc, char **argv)
 
         Close(connfd);
     }
+
+
     return 0;
 }
 
