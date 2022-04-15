@@ -11,6 +11,8 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
+void serve_static(int fd, char *filename, int filesize);
+void get_filetype(char *filename, char *filetype);
 void get_filetype(char *filename, char *filetype);
 void clienterror(int fd, char *cause, char *errnum, 
         char *shortmsg, char *longmsg);
@@ -77,13 +79,69 @@ void doit(int fd)
 
     /* Parse URI from GET request */
     is_static = parse_uri(uri, filename, cgiargs);
+
     if (stat(filename, &sbuf) < 0) {
         clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
         return;
     }
 
+    if (is_static) { /* Serve static content */          
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file");
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size);
+    } else { /* Serve dynamic content */
+
+    }
 }
 /* $end doit */
+
+/*
+ * serve_static - copy a file back to the client 
+ */
+/* $begin serve_static */
+void serve_static(int fd, char *filename, int filesize)
+{
+    int srcfd;
+    char *srcp, filetype[MAXLINE], buf[MAXBUF];
+
+    /* Send response headers to client */
+    get_filetype(filename, filetype);
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-length: %d\r\n", filesize);
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-type: %s\r\n\r\n", filetype);
+    Rio_writen(fd, buf, strlen(buf));
+
+    /* Send response body to client */
+    srcfd = Open(filename, O_RDONLY, 0);
+    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    Close(srcfd);
+    Rio_writen(fd, srcp, filesize);
+    Munmap(srcp, filesize);
+}
+
+/*
+ * get_filetype - derive file type from file name
+ */
+void get_filetype(char *filename, char *filetype) 
+{
+    if (strstr(filename, ".html"))
+	strcpy(filetype, "text/html");
+    else if (strstr(filename, ".gif"))
+	strcpy(filetype, "image/gif");
+    else if (strstr(filename, ".png"))
+	strcpy(filetype, "image/png");
+    else if (strstr(filename, ".jpg"))
+	strcpy(filetype, "image/jpeg");
+    else
+	strcpy(filetype, "text/plain");
+}  
+/* $end serve_static */
 
 /*
  * read_requesthdrs - read HTTP request headers
